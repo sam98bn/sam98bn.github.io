@@ -1,0 +1,296 @@
+---
+title: "FinalProject"
+output: html_document
+---
+
+Here is a climate change data analysis to show that climate change is indeed a huge problem caused by human activity using R:
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+library(rvest)
+library(stringr)
+library(rvest)
+library(tidyr)
+library(data.table)
+library(ggplot2)
+library(dplyr)
+library(broom)
+```
+
+First, we need to show that global temperatures are increasing in the first place. For that, we are going to use NASA's global temperature dataset for the period 1880-2018. The data can be found at https://climate.nasa.gov/vital-signs/global-temperature/. To use the data, we need to scrape it from the HTML page it is in. After using a web inspector to see how the data is organized in the URL below, we get it using the folloing code:
+
+```{r}
+# The URL for the HTML data
+url <- "https://data.giss.nasa.gov/gistemp/graphs/graph_data/Global_Mean_Estimates_based_on_Land_and_Ocean_Data/graph.txt"
+
+# Search for the desired elements and returns the raw HTML
+html_page <- url %>%
+  read_html() %>%
+  html_nodes("p") %>%
+  html_text()
+
+# Separate each line into one row
+s <-
+  read.table(textConnection(html_page), header = F, sep = "\n", stringsAsFactors = F) %>%
+  slice(5:n())
+
+# Split each row into the different cells and tidys the data frame
+df_nasa_temp <-
+  strsplit(s$V1, split="    ") %>%
+  data.frame() %>%
+  transpose() %>%
+  select(V1, V2)
+
+# Rename the columns to their meaning
+names(df_nasa_temp) <- c("year", "temp")
+
+# Convert columns to their correct type
+df_nasa_temp[] <- lapply(df_nasa_temp, function(x) type.convert(as.character(x)))
+
+# Show summary of the resulting data frame
+head(df_nasa_temp)
+```
+
+Now we have a data frame containng the temperature each year since 1880. We are going to try plotting it to see if there is a general trend:
+
+```{r}
+# Plot temperature vs year and add a line fit
+df_nasa_temp %>%
+  ggplot(aes(x=year, y=temp)) +
+  geom_point() +
+  geom_smooth(method=lm)
+```
+
+We can clearly a general trend increasing as time increases, but we can confirm it by actually calulating the slope and P-value of the linear model:
+
+```{r}
+# Calculate the coefficients of the linear model
+fit_nasa_temp_lin <- lm(temp ~ year, data = df_nasa_temp)
+summary(fit_nasa_temp_lin)
+```
+
+The P-value is almost 0 and the slope is definitely positive, and even though it seems very small, it can have a significant effect over tens of years. But to actually quantify the increase, we need to make sure that our linear model fits the data. We can do that by plotting the residuals vs fitted values of the model, we expect the residuals to be independent of the values for a good model:
+
+```{r}
+# Plot residual vs fitted values of the linear model
+augment(fit_nasa_temp_lin) %>%
+  ggplot(aes(x = .fitted, y=.resid)) +
+  geom_point()
+```
+
+This does not seem perfect, so we are going to plot a general smooth to try estimating the appropriate model:
+
+```{r message=FALSE, warning=FALSE}
+# plot the same points but with general smoothing line
+df_nasa_temp %>%
+  ggplot(aes(x=year, y=temp)) +
+  geom_point() +
+  geom_smooth()
+```
+
+This looks more like a parabola, so let's try fitting a quadratic model:
+
+```{r}
+# Calculate the coefficients of the qudratic model
+df_nasa_temp$year2 <- df_nasa_temp$year^2
+fit_nasa_temp_quad <- lm(temp ~ year + year2, data = df_nasa_temp)
+summary(fit_nasa_temp_quad)
+```
+
+```{r}
+# Plot residual vs fitted values of the quadratic model
+augment(fit_nasa_temp_quad) %>%
+  ggplot(aes(x = .fitted, y=.resid)) +
+  geom_point()
+```
+
+This is much better, we can mostly see now the residuals being independent of the fitted values. Now we can take a look at the equation:
+T = 8.24e-5 * Y^2 - 0.314 * Y + 298.8
+plotting this equation over the period 1880-2018 looks like the following:
+
+```{r}
+# Plot the fitted model over the dataset time period
+augment(fit_nasa_temp_quad) %>%
+  ggplot(aes(x = year, y=.fitted)) +
+  geom_point()
+```
+
+Using this graph and solving the quadratic equation, we can predict that at this rate, the global temperature is going to hit 2 degrees Celsius by 2073, which is not a very long time from now.
+
+Scientists say that 2 degrees Celsius is going to be catastrophic for the planet. It can cause flooding, hurricanes, food shortages, drouts, and so many other disasters. read more at: https://climate.nasa.gov/news/2458/why-a-half-degree-temperature-rise-is-a-big-deal/.
+
+Now, we need to show the link between this obvious increase in temperature and human activity. For that, We are going to use NASA's CO2 levels dataset for the period 1958-2019. The data can be found at https://climate.nasa.gov/vital-signs/carbon-dioxide/. Similarly to the temperature data, we get the dataset using the follwoing code:
+
+```{r}
+# The URL for the HTML data
+url <- "ftp://aftp.cmdl.noaa.gov/products/trends/co2/co2_mm_mlo.txt"
+
+# Search for the desired elements and returns the raw HTML
+html_page <- url %>%
+  read_html() %>%
+  html_nodes("p") %>%
+  html_text()
+
+# Separate each line into one row
+# and split each row into the different cells and tidys the data frame
+df_nasa_co2 <-
+  read.table(textConnection(html_page), header = F, sep = "", stringsAsFactors = F) %>%
+  data.frame() %>%
+  select(V1, V2, V5)
+
+# Rename the columns to their meaning
+names(df_nasa_co2) <- c("year", "month", "CO2")
+
+# Show summary of the resulting data frame
+head(df_nasa_co2)
+```
+
+This dataset has monthly CO2 levels over the time period 1958-2019. but to use it with the temperature data (which is yearly), we need to make this dataset yearly as well. We can do that by taking the mean over the months for each year and assgining that mean to the corresponding year:
+
+```{r}
+# Group by year and take the mean over the months of each year
+df_nasa_co2_yearly <- df_nasa_co2 %>%
+  group_by(year) %>%
+  summarise(CO2 = mean(CO2)) %>%
+  mutate(year = year)
+
+# Show summary of the resulting yearly data frame
+head(df_nasa_co2_yearly)
+```
+
+Now that we have a yearly data frame, we can join it with the temperature data frame so we can can compare them later:
+
+```{r}
+# merge with the previous data frame based on year
+df_complete_nasa <- 
+  merge(df_nasa_co2_yearly, df_nasa_temp, by="year") %>%
+  select(-year2)
+
+# Show summary of the resulting data frame that has both temperature and CO2 data
+head(df_complete_nasa)
+```
+
+We now use this complete data frame to plot temperature vs CO2 levels to see if the two are correlated, we are also going to fit a linear model to quantify the trend:
+
+```{r}
+# Plot temperature vs CO2 and add a line fit
+df_complete_nasa %>%
+  ggplot(aes(x=CO2, y=temp)) +
+  geom_point() +
+  geom_smooth(method=lm)
+```
+
+
+```{r}
+# Calculate the coefficients of the linear model
+fit_CO2_temp <- lm(temp ~ CO2, data = df_complete_nasa)
+summary(fit_CO2_temp)
+```
+
+The P-value is again almost 0, but as before, we need to plot the residuals to make sure that our model is useful:
+
+```{r}
+# Plot residual vs fitted values of the linear model
+augment(fit_CO2_temp) %>%
+  ggplot(aes(x = .fitted, y=.resid)) +
+  geom_point()
+```
+
+We can see that the model was mostly useful, so now we can look at the equation:
+T = 0.01 * C - 3.56
+So for every extra CO2 ppm (part per million, which means one part CO2 per million parts dry air), we get an additional 0.01 degrees Celsius. Again, this number does not seem to be a lot but it has significant effects on earth.
+
+So far, We have shown that the earth is indeed heating up, and that the heating is strongly correlated with CO2 emission levels. To see why this correlation is actually a causation relationship, read more at: https://skepticalscience.com/empirical-evidence-for-co2-enhanced-greenhouse-effect.htm. 
+
+There are sadly still a lot of skeptisim over climate change, one of the main beliefs out there is that this increase in temperature is a normal part of earth life cycle, and that the temperature will go down eventually. To show that this hypothesis does not hold up, we are going to use NOAA's temperature dataset, which covers around 1000 years of temperature history. The datset, along with a breif explanation on how this data was collected can be found here: https://www.ncdc.noaa.gov/paleo-search/study/10437. Again, we are using HTML scraping to get the data using the following code: 
+
+```{r}
+# The URL for the HTML data
+url <- "https://www1.ncdc.noaa.gov/pub/data/paleo/contributions_by_author/frank2010/ensembles-10yearsmth.txt"
+
+# Search for the desired elements and returns the raw HTML
+html_page <- url %>%
+  read_html() %>%
+  html_nodes("p") %>%
+  html_text()
+
+# Separate each line into one row
+s <- read.table(textConnection(html_page), header = F, sep = "\n", stringsAsFactors = F)
+
+# Split each row into the different cells and tidys the data frame
+df_noaa_temp <-
+  strsplit(s$V1, split = "\t") %>%
+  data.frame() %>%
+  transpose()
+
+# Rename the columns to their meaning, in this case, it is the first row
+names(df_noaa_temp) <- as.matrix(df_noaa_temp[1, ])
+df_noaa_temp <- df_noaa_temp[-1, ]
+
+# Convert columns to their correct type
+df_noaa_temp[] <- lapply(df_noaa_temp, function(x) type.convert(as.character(x)))
+
+# Show summary of the resulting data frame
+head(df_noaa_temp[1:4])
+```
+
+This dataset contains multiple reconstructions of historical temperatures. For simplicity of this analysis, we are just going to take the average of all of them:
+
+```{r}
+# Take the average of all reconstrucitions for every given year and make that the temperature of that year
+df_noaa_temp_mean <- df_noaa_temp %>%
+  mutate(mean_temp = rowMeans(df_noaa_temp[, -1])) %>%
+  select(Year, mean_temp)
+
+# Show summary of the resulting data frame
+head(df_noaa_temp_mean)
+```
+
+Now we are going to plot temperatures over the years as we did above. we are also adding a smoothing curve to better see any local trends in the plot:
+
+```{r message=FALSE, warning=FALSE}
+# Plot the temperature vs year and add a smoothing curve
+df_noaa_temp_mean %>%
+  ggplot(aes(x=Year, y=mean_temp)) +
+  geom_point() +
+  geom_smooth()
+```
+
+We can see the latest increase, starting around 1850 when the industrial revolution starting affecting the CO2 levels, is very extreme and unlike any single increase seen on earth since at least 1000 A.D. 
+
+To better see the difference, we can fit two linear models, one before 1850 and one after:
+
+```{r warning=FALSE}
+# Plot the data with two line fits, one for the period <1850 and one for >1850
+df_noaa_temp_mean %>%
+  mutate(new = Year > 1850) %>%
+  group_by(new) %>%
+  ggplot(aes(x=Year, y=mean_temp, group=new)) +
+  geom_point() +
+  geom_smooth(method=lm)
+```
+
+```{r}
+# fit linear model for the years after 1850
+df_new <- filter(df_noaa_temp_mean, Year > 1850)
+fit_new <- lm(Year ~ mean_temp, data = df_new)
+summary(fit_new)
+```
+
+```{r}
+# fit linear model for the years before 1850
+df_old <- filter(df_noaa_temp_mean, Year < 1850)
+fit_old <- lm(Year ~ mean_temp, data = df_old)
+summary(fit_old)
+```
+
+We can now see the huge difference in the slopes between the two time periods,
+old: -1086
+new: 170
+
+This analysis was not supposed to be an exhuastive proof of climate change, and there exists A LOT more evidence to state without a doubt that climate change is a real crisis. 
+
+Please feel free to share this around to hopefully contibute to educating people about this crisis, because we all need to start acting fast for the sake of our only planet.
+
+
+
+
